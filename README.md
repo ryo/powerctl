@@ -4,6 +4,9 @@ powerctl
 CUI tool for LANdeBOOT and AP7900
 ---------------------------------
 
+powerctl is command line interface script for <a href="http://www.meikyo.co.jp/products/5lc.html">LANdeBOOT serials</a>
+and <a href="http://www.apc.com/resource/include/techspec_index.cfm?base_sku=AP7900&ISOCountryCode=en">APC AP7900</a>.
+
 
 	e.g.)
 	
