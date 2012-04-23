@@ -1,0 +1,30 @@
+#
+# configuration file for powerctl
+# this file is written in YAML: http://yaml.org/
+#
+servers:
+  my-landeboot:
+    type: landeboot
+    addr: 10.0.0.100
+    pass: magic
+  my-ap7900:
+    type: ap7900
+    addr: 10.0.0.101
+    user: apc
+    pass: apc
+
+targets:
+  deviceA: my-landeboot/1
+  aliasA:  my-landeboot/1
+  deviceB: my-landeboot/2
+  deviceC: my-landeboot/3
+  deviceD: my-landeboot/4
+
+  device1: my-ap7900/1
+  device2: my-ap7900/2
+  device3: my-ap7900/3
+  device4: my-ap7900/4
+  device5: my-ap7900/5
+  device6: my-ap7900/6
+  device7: my-ap7900/7
+  device8: my-ap7900/8

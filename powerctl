@@ -1,0 +1,284 @@
+#!/usr/bin/env perl
+#
+# $Id: powerctl,v 1.2 2012/04/23 08:41:16 ryo Exp $
+#
+use strict;
+use warnings;
+use IO::Socket::INET;
+use Getopt::Std;
+use YAML::XS;
+use File::Slurp;
+use Data::Dumper;
+
+$| = 1;
+
+my $HOME = $ENV{HOME} || ((getpwuid($<))[7]);
+my $CONFIG = "$HOME/.powerctl";
+
+my $yaml = File::Slurp::slurp($CONFIG) or die "$CONFIG: $!\n";
+my $config = Load($yaml) or die "$CONFIG: parse error\n";
+
+my %opts;
+getopts('vq', \%opts) or usage($config);
+
+usage($config) if ($#ARGV < 0);
+
+my $target = shift;
+my $command = shift;
+
+usage($config) unless ($command =~ m/^(on|off|reset|reboot)$/i);
+
+usage($config) unless (exists $config->{targets}->{$target});
+usage($config) unless ($config->{targets}->{$target} =~ m,^(.*?)/(\d)$,);
+my ($server, $acport) = ($1, $2);
+
+(exists $config->{servers}->{$server}) or die "$server is not defined in $CONFIG\n";
+my $addr = $config->{servers}->{$server}->{addr} or die "addr of $server is not defined in $CONFIG\n";
+
+if ($config->{servers}->{$server}->{type} eq 'ap7900') {
+	ap7900_power_control($addr, $acport,
+	    $config->{servers}->{$server}->{user},
+	    $config->{servers}->{$server}->{pass},
+	    $command);
+} elsif ($config->{servers}->{$server}->{type} eq 'landeboot') {
+	landeboot_power_control($addr, $acport,
+	    $config->{servers}->{$server}->{pass},
+	    $command);
+} else {
+	die "$server: unknown server type '$config->{server}->{$server}->{type}'\n";
+}
+
+sub usage {
+	my $config = shift;
+	my @target = keys(%{$config->{targets}});
+
+	my $targetlist = join("\n\t\t", map { sprintf("%-16s %s", $_, $config->{targets}->{$_}) }
+	    sort { $config->{targets}->{$a} cmp $config->{targets}->{$b} } @target);
+
+die <<__USAGE__;
+usage: powerctl [options] [<target> <command>]
+	-v	verbose
+	-q	quiet
+
+	<target>
+		$targetlist
+	<command>
+		on
+		off
+		reset, reboot (off and on)
+__USAGE__
+}
+
+exit;
+
+
+
+
+sub landeboot_power_control {
+	my ($addr, $acport, $pass, $cmd) = @_;
+
+	my @cmd;
+	if ($cmd =~ m/^on$/i) {
+		push(@cmd, "PON");
+	} elsif ($cmd =~ m/^off$/i) {
+		push(@cmd, "POF");
+	} elsif ($cmd =~ m/^(reset|reboot)$/i) {
+		push(@cmd, "POF", "PON");
+	} else {
+		die "unknown command: $cmd\n";
+	}
+
+	my $sock = IO::Socket::INET->new(PeerAddr => $addr,
+	                                 PeerPort => 23,
+	                                 Proto => 'tcp') or die "$addr: $!\n";
+	$sock->autoflush(1);
+	my $e = Expect->new();
+	$e->setio($sock);
+
+	#
+	# check banner
+	#
+	$e->expect(qr/server ready/i) or die "unknown banner\n";
+
+	#
+	# send "\r"
+	#
+	$e->send("\r");
+
+	#
+	# check "Password:" prompt
+	#
+	$e->expect(qr/Password:/i) or die "no Password prompt\n";
+
+	#
+	# send password
+	#
+	$e->send($pass . "\r");
+
+	#
+	# check "OK"
+	#
+	$e->expect(qr/OK/) or die "no 'OK' response\n";
+
+
+	#
+	# send command
+	#
+	for (my $i = 0; $i <= $#cmd; $i++) {
+		my $command = $cmd[$i] . $acport;
+		print "send command '$command'\n" unless (exists $opts{q});
+		$e->send("$command\r");
+
+		if ($i != $#cmd) {
+			sleep 2;
+		}
+	}
+}
+
+
+sub ap7900_power_control {
+	my ($addr, $acport, $user, $pass, $cmd) = @_;
+
+
+	my $sock = IO::Socket::INET->new(PeerAddr => $addr,
+	                                 PeerPort => 23,
+	                                 Proto => 'tcp') or die "$addr: $!\n";
+	$sock->autoflush(1);
+	my $e = Expect->new();
+	$e->setio($sock);
+	$e->senddelay(0.05);
+
+	$e->expect(qr/User Name/s, 3) or die "no login prompt\n";
+	$e->send($user . "\r");
+
+	$e->expect(qr/Password/s, 3)  or die "no password prompt\n";
+	$e->send($pass . "\r");
+
+	$e->expect(qr/Device Manager.*\n> /s, 3) or die "no <Control Console> menu\n";
+	$e->send("1\r");
+
+	$e->expect(qr/Outlet Management.*\n> /s, 3) or die "no <Device Manager> menu\n";
+	$e->send("2\r");
+
+	$e->expect(qr/Outlet Management.*\n> /s, 3) or die "no <Outlet Management> menu\n";
+	$e->send("1\r");
+
+	$e->expect(qr/Master Control.*\n> /s, 3) or die "no <Outlet Control/Configuration> menu\n";
+	$e->send("$acport\r");	# outlet no
+
+	$e->expect(qr/Configure Outlet.*\n> /s, 3) or die "no <Outlet> menu\n";
+	$e->send("1\r");	# Control Outlet
+
+	$e->expect(qr/Control Outlet.*\n> /s, 3) or die "no <Control Outlet> menu\n";
+
+	print "set port $acport $cmd\n" unless ($opts{q});
+	$e->send("1\r") if ($cmd =~ m/on/i);	# 1:Immediate On
+	$e->send("2\r") if ($cmd =~ m/off/i);	# 2:Immediate Off
+	$e->send("3\r") if ($cmd =~ m/re/i);	# 3:Reboot
+
+	$e->expect(qr/Enter 'YES' to continue or <ENTER> to cancel :/s, 3) or die "no <YES> prompt\n";
+	$e->send("YES\r");
+	$e->expect(qr/Press <ENTER> to continue/s, 3) or die "no <ENTER> prompt\n";
+	$e->send("\r");
+
+	$e->expect(qr/[\r\n]> /s, 3) or die "no command prompt";
+	$e->send("\e");
+	$e->expect(qr/[\r\n]> /s, 3) or die "no command prompt";
+	$e->send("\e");
+	$e->expect(qr/[\r\n]> /s, 3) or die "no command prompt";
+	$e->send("\e");
+	$e->expect(qr/[\r\n]> /s, 3) or die "no command prompt";
+	$e->send("\e");
+	$e->expect(qr/[\r\n]> /s, 3) or die "no command prompt";
+	$e->send("\e");
+	$e->expect(qr/[\r\n]> /s, 3) or die "no command prompt";
+	$e->send("4\r\n");
+
+	$e->expect(qr/Bye/s, 3) or die "no command prompt";
+}
+
+package Expect;
+
+sub new {
+	my $self = {};
+
+	$self->{readbuf} = '';
+	$self->{senddelay} = 0;
+
+	bless $self;
+}
+
+sub senddelay {
+	my $self = shift;
+	$self->{senddelay} = shift;
+}
+
+sub setio {
+	my $self = shift;
+	$self->{io} = shift;
+}
+
+sub send {
+	my $self = shift;
+
+	my $sendbuf = join("", @_);
+	print "\e[31m", vis($sendbuf), "\e[m" if ($opts{v});
+
+	select(undef, undef, undef, $self->{senddelay});
+	$self->{io}->print($sendbuf);
+	$self->{io}->flush();
+}
+
+sub expect {
+	my $self = shift;
+	my $pattern = shift;
+	my $timeout = shift;
+
+	my $sock = $self->{io};
+
+	until ($self->{readbuf} =~ m/$pattern/) {
+		my $rin = '';
+		vec($rin, $sock->fileno, 1) = 1;
+		my $nfound = select($rin, undef, undef, $timeout);
+
+		if (($nfound > 0) && vec($rin, $sock->fileno, 1)) {
+			my $rc = $sock->sysread($_, 1024 * 64);
+			return undef if ($rc <= 0);
+
+			print vis($_) if ($opts{v});
+		} else {
+			return undef;
+		}
+		$self->{readbuf} .= $_;
+	}
+	$self->{readbuf} = $';
+	1;
+}
+
+sub vischar {
+	my $ch = shift;
+
+	if ($ch == 0) {
+		'\000';
+	} elsif ($ch == 0x5c) {
+		'\134';
+	} elsif ($ch < 0x7f) {
+		sprintf('\^%c', $ch + 0x40);
+	} elsif ($ch == 0x7f) {
+		'\^?';
+	} elsif ($ch < 0xa0) {
+		sprintf('\M^%c', $ch - 0x40);
+	} elsif ($ch == 0xa0) {
+		'\240';
+	} elsif ($ch < 0xff) {
+		sprintf('\M-%c', $ch - 0x80);
+	} else {
+		'\M^?';
+	}
+}
+
+sub vis {
+	local $_ = shift;
+	s/([\x00-\x08\x0b-\x1f\x5c\x7f-\xff])/vischar(unpack("C", $1))/seg;
+	$_;
+}
