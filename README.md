@@ -5,7 +5,8 @@ CUI tool for LANdeBOOT and AP7900
 ---------------------------------
 
 
-e.g.)
+	e.g.)
+	
 	% cat ~/.powerctl
 	servers:
 	  ap7900:
