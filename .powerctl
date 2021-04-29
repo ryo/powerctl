@@ -12,6 +12,12 @@ servers:
     addr: 10.0.0.101
     user: apc
     pass: apc
+  my-tplink1:
+    type: tplink
+    addr: 10.0.0.102
+  my-tplink2:
+    type: tplink
+    addr: 10.0.0.103
 
 targets:
   deviceA: my-landeboot/1
@@ -28,3 +34,6 @@ targets:
   device6: my-ap7900/6
   device7: my-ap7900/7
   device8: my-ap7900/8
+
+  device10: my-tplink1
+  device11: my-tplink2
