@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# $Id: powerctl,v 1.7 2021/04/29 13:09:46 ryo Exp $
+# $Id: powerctl,v 1.10 2021/05/07 06:36:00 ryo Exp $
 #
 use strict;
 use warnings;
@@ -50,7 +50,7 @@ if ($config->{servers}->{$server}->{type} eq 'ap7900') {
 } elsif ($config->{servers}->{$server}->{type} eq 'tplink') {
 	tplink_power_control($command, $addr);
 } else {
-	die "$server: unknown server type '$config->{server}->{$server}->{type}'\n";
+	die "$server: unknown server type '$config->{servers}->{$server}->{type}'\n";
 }
 
 sub usage {
@@ -58,12 +58,12 @@ sub usage {
 	my @target = keys(%{$config->{targets}});
 
 	my $bytarget;
-	while (my ($k, $v) = each($config->{targets})) {
+	while (my ($k, $v) = each(%{$config->{targets}})) {
 		push(@{$bytarget->{$v}}, $k);
 	}
 
 	my @targetlist;
-	for (sort(keys($bytarget))) {
+	for (sort(keys(%{$bytarget}))) {
 		push(@targetlist,
 			sprintf("%-18s %s",
 				join(", ",
@@ -243,6 +243,7 @@ sub tplink_power_control {
 		push(@cmd, '{"system":{"set_relay_state":{"state":0}}}');
 	} elsif ($cmd =~ m/^(reset|reboot)$/i) {
 		push(@cmd, '{"system":{"set_relay_state":{"state":0}}}');
+		push(@cmd, 'sleep');
 		push(@cmd, '{"system":{"set_relay_state":{"state":1}}}');
 	} else {
 		die "unknown command: $cmd\n";
@@ -254,9 +255,15 @@ sub tplink_power_control {
 	$sock->autoflush(1);
 
 	for (@cmd) {
+		if ($_ eq 'sleep') {
+			sleep 1;
+			next;
+		}
+
+		print "send command '$_'\n" if (exists $opts{q});
 		$sock->print(tplink_encrypt($_));
 		$sock->sysread(my $buf, 1024 * 64);
-		print tplink_decrypt($buf), "\n";
+		print tplink_decrypt($buf), "\n" if (exists $opts{v});
 		sleep 1;
 	}
 }
